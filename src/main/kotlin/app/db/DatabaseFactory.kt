@@ -1,10 +1,8 @@
 package app.db
 
-import app.AppConfig
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.update
@@ -12,11 +10,17 @@ import org.jetbrains.exposed.sql.update
 /**
  * Simple SQLite storage for MVP. Replace with Postgres later.
  */
+object ProcessedUpdates : org.jetbrains.exposed.sql.Table("processed_updates") {
+    val updateId = long("update_id").uniqueIndex()
+    val ts = long("ts")
+    override val primaryKey = PrimaryKey(updateId)
+}
+
 object DatabaseFactory {
     fun init() {
         Database.connect("jdbc:sqlite:./bot.db", driver = "org.sqlite.JDBC")
         transaction {
-            SchemaUtils.createMissingTablesAndColumns(Users, Messages, MemoryNotes, UserStats)
+            SchemaUtils.createMissingTablesAndColumns(Users, Messages, MemoryNotes, UserStats, ProcessedUpdates)
         }
     }
 }
@@ -55,13 +59,18 @@ object UserStats : org.jetbrains.exposed.sql.Table("user_stats") {
 
 object UserRepo {
     fun upsert(userId: Long, firstName: String?, username: String?) = transaction {
-        val exists = Users.select { Users.id eq userId }.count() > 0
+        val exists = Users
+            .slice(Users.id)
+            .select { Users.id eq userId }
+            .limit(1)
+            .any()
+
         if (!exists) {
             Users.insert {
-                it[id] = userId
-                it[firstName] = firstName
-                it[username] = username
-                it[createdAt] = System.currentTimeMillis()
+                it[Users.id] = userId
+                it[Users.firstName] = firstName
+                it[Users.username] = username
+                it[Users.createdAt] = System.currentTimeMillis()
             }
         } else {
             Users.update({ Users.id eq userId }) {
@@ -71,3 +80,5 @@ object UserRepo {
         }
     }
 }
+
+

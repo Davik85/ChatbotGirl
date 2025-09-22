@@ -7,6 +7,12 @@ import io.github.cdimascio.dotenv.dotenv
  * For local dev, .env is allowed. In production, rely on real env vars.
  */
 object AppConfig {
+    const val LIMIT_REACHED_TEXT: String =
+        "Сегодня лимит бесплатных сообщений исчерпан. Оформи подписку и общайся без ограничений ❤️"
+
+    const val CRISIS_TEXT_PREFIX: String =
+        "Похоже, тебе сейчас очень тяжело. Ты не один."
+
     // Avoid magic numbers: keep constants here
     const val DEFAULT_PORT: Int = 8080
     const val FREE_DAILY_MSG_LIMIT: Int = 10

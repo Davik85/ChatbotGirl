@@ -1,10 +1,14 @@
 package app
 
+import app.AppConfig.LIMIT_REACHED_TEXT
 import app.db.DatabaseFactory
 import app.db.UserRepo
 import app.llm.OpenAIClient
 import app.llm.OpenAIClient.ChatMessage
-import app.logic.*
+import app.logic.MemoryService
+import app.logic.PersonaPrompt
+import app.logic.RateLimiter
+import app.logic.Safety
 import app.web.TelegramApi
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
@@ -16,8 +20,6 @@ import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
 
 /**
  * Ktor webhook that handles Telegram updates and replies through OpenAI.
@@ -66,7 +68,7 @@ fun main() {
 
                 // Rate limit free users
                 if (!RateLimiter.canSend(userId)) {
-                    val paywall = "Сегодня лимит бесплатных сообщений исчерпан. Оформи подписку и общайся без ограничений ❤️"
+                    val paywall = LIMIT_REACHED_TEXT
                     tg.sendMessage(msg.chat.id, paywall)
                     call.respondText("ok"); return@post
                 }
