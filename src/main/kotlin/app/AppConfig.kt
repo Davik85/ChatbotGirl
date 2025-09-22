@@ -7,6 +7,7 @@ import io.github.cdimascio.dotenv.dotenv
  * For local dev, .env is allowed. In production, rely on real env vars.
  */
 object AppConfig {
+    const val OPENAI_URL: String = "https://api.openai.com/v1/chat/completions"
     const val LIMIT_REACHED_TEXT: String =
         "Сегодня лимит бесплатных сообщений исчерпан. Оформи подписку и общайся без ограничений ❤️"
 

@@ -5,7 +5,7 @@ import app.db.Messages
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.time.LocalDate
-
+const val LIMIT_DIALOG=12
 /**
  * Minimal memory:
  * - Raw message log
@@ -22,7 +22,7 @@ object MemoryService {
         }
     }
 
-    fun recentDialog(userId: Long, limit: Int = 12): List<Pair<String, String>> = transaction {
+    fun recentDialog(userId: Long, limit: Int = LIMIT_DIALOG): List<Pair<String, String>> = transaction {
         Messages.select { Messages.userId eq userId }
             .orderBy(Messages.id, SortOrder.DESC)
             .limit(limit)
