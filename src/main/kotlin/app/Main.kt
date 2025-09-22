@@ -69,7 +69,7 @@ fun main() {
                 // Rate limit free users
                 if (!RateLimiter.canSend(userId)) {
                     val paywall = LIMIT_REACHED_TEXT
-                    tg.sendMessage(msg.chat.id, paywall)
+                    tg.sendMessage(msg.chat.id, AppConfig.LIMIT_REACHED_TEXT)
                     call.respondText("ok"); return@post
                 }
 
