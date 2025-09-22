@@ -8,6 +8,8 @@ import io.github.cdimascio.dotenv.dotenv
  */
 object AppConfig {
     const val OPENAI_URL: String = "https://api.openai.com/v1/chat/completions"
+    const val TELEGRAM_BASE: String = "https://api.telegram.org"
+
     const val LIMIT_REACHED_TEXT: String =
         "Сегодня лимит бесплатных сообщений исчерпан. Оформи подписку и общайся без ограничений ❤️"
 

@@ -1,6 +1,6 @@
 package app.web
 
-import app.AppConfig
+import app.AppConfig.TELEGRAM_BASE
 import app.TgSendMessage
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import okhttp3.MediaType.Companion.toMediaType
@@ -23,7 +23,7 @@ class TelegramApi(private val token: String) {
     fun sendMessage(chatId: Long, text: String) {
         val payload = mapper.writeValueAsString(TgSendMessage(chatId, text))
         val req = Request.Builder()
-            .url("https://api.telegram.org/bot$token/sendMessage")
+            .url("$TELEGRAM_BASE/bot$token/sendMessage")
             .post(payload.toRequestBody(json))
             .build()
         client.newCall(req).execute().use { resp ->
@@ -34,7 +34,7 @@ class TelegramApi(private val token: String) {
     }
     fun setWebhook(url: String) {
         val req = Request.Builder()
-            .url("https://api.telegram.org/bot$token/setWebhook?url=$url")
+            .url("$TELEGRAM_BASE/bot$token/setWebhook?url=$url")
             .get()
             .build()
         client.newCall(req).execute().use { /* log status */ }
