@@ -3,7 +3,10 @@ build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
+/.gradle/
+out/
 bot.db
+.env
 ### IntelliJ IDEA ###
 .idea/*
 .idea/modules.xml
