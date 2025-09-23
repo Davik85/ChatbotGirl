@@ -81,4 +81,31 @@ object UserRepo {
     }
 }
 
+object UpdatesRepo {
+    fun seen(updateId: Long): Boolean = transaction {
+        !ProcessedUpdates
+            .select { ProcessedUpdates.updateId eq updateId }
+            .limit(1)
+            .empty()
+    }
+
+    fun mark(updateId: Long) = transaction {
+        ProcessedUpdates.insert {
+            it[ProcessedUpdates.updateId] = updateId
+            it[ts] = System.currentTimeMillis()
+        }
+    }
+}
+
+object PremiumRepo {
+    fun isPremium(userId: Long): Boolean = transaction {
+        Users
+            .slice(Users.isPremiumUntil)
+            .select { Users.id eq userId }
+            .firstOrNull()
+            ?.get(Users.isPremiumUntil)
+            ?.let { it > System.currentTimeMillis() } == true
+    }
+}
+
 

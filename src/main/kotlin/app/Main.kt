@@ -20,6 +20,8 @@ import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import app.db.UpdatesRepo
+import app.db.PremiumRepo
 
 /**
  * Ktor webhook that handles Telegram updates and replies through OpenAI.
@@ -41,10 +43,24 @@ fun main() {
 
         routing {
             get("/") { call.respondText("OK") }
+            get("/privacy") {
+                call.respondText("Privacy Policy (stub). We process your data to provide the service. Not a medical service.")
+            }
+            get("/terms") {
+                call.respondText("Terms of Service (stub). Subscriptions auto-renew until cancelled. Refund policy applies.")
+            }
 
             post(config.telegramSecretPath) {
                 val body = call.receiveText()
                 val update: TgUpdate = mapper.readValue(body)
+                // idempotency guard
+                val updId = update.update_id
+                if (UpdatesRepo.seen(updId)) {
+                    call.respondText("dup");
+                    return@post
+                }
+                UpdatesRepo.mark(updId)
+
                 val msg = update.message
                 if (msg?.text.isNullOrBlank()) {
                     call.respondText("ignored"); return@post
@@ -67,9 +83,9 @@ fun main() {
                 }
 
                 // Rate limit free users
-                if (!RateLimiter.canSend(userId)) {
-                    val paywall = LIMIT_REACHED_TEXT
-                    tg.sendMessage(msg.chat.id, AppConfig.LIMIT_REACHED_TEXT)
+                val isPremium = PremiumRepo.isPremium(userId)
+                if (!isPremium && !RateLimiter.canSend(userId)) {
+                    tg.sendMessage(msg.chat.id, LIMIT_REACHED_TEXT)
                     call.respondText("ok"); return@post
                 }
 
