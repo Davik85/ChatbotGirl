@@ -38,6 +38,7 @@ class OpenAIClient(
         // IMPORTANT: OpenAI expects snake_case
         val max_tokens: Int? = 200
     )
+
     data class ChatChoice(val index: Int, val message: ChatMessage)
     data class ChatResponse(val choices: List<ChatChoice>)
 

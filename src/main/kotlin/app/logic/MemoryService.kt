@@ -5,7 +5,9 @@ import app.db.Messages
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.time.LocalDate
-const val LIMIT_DIALOG=12
+
+const val LIMIT_DIALOG = 12
+
 /**
  * Minimal memory:
  * - Raw message log
