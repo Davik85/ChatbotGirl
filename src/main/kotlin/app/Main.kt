@@ -23,10 +23,7 @@ import io.ktor.server.routing.*
 import app.db.UpdatesRepo
 import app.db.PremiumRepo
 
-/**
- * Ktor webhook that handles Telegram updates and replies through OpenAI.
- * Paywall integration can be added as a middleware (check premium flag before generation).
- */
+
 fun main() {
     DatabaseFactory.init()
     val config = AppConfig
@@ -34,9 +31,6 @@ fun main() {
     val mapper = jacksonObjectMapper()
     val ai = OpenAIClient(config.openAiApiKey)
 
-    // Optional: set webhook automatically on boot (use your public HTTPS URL)
-    // val publicUrl = "https://your.domain${config.telegramSecretPath}"
-    // tg.setWebhook(publicUrl)
 
     embeddedServer(Netty, port = config.port, host = "0.0.0.0") {
         install(ContentNegotiation) { jackson() }
