@@ -37,7 +37,7 @@ object AppConfig {
     ?: error("OPENAI_API_KEY is required")
 
     // Persona constants
-    const val PERSONA_NAME: String = "Полина"
+    const val PERSONA_NAME: String = "Ева"
     const val PERSONA_AGE: String = "26"
     const val PERSONA_STYLE: String = "Warm, empathetic, playful yet respectful"
 
