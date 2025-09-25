@@ -1,5 +1,5 @@
 plugins {
-    kotlin("jvm") version "2.0.0"
+    kotlin("jvm") version "2.0.21"
     application
 }
 layout.buildDirectory.set(file("out"))
@@ -23,6 +23,7 @@ dependencies {
     implementation("org.jetbrains.exposed:exposed-dao:0.53.0")
     implementation("org.jetbrains.exposed:exposed-jdbc:0.53.0")
     implementation("org.xerial:sqlite-jdbc:3.46.0.0")
+    implementation("org.slf4j:slf4j-simple:2.0.13")
 
     implementation("io.github.cdimascio:dotenv-kotlin:6.4.1")
 
@@ -31,6 +32,7 @@ dependencies {
 
 application {
     mainClass.set("app.MainKt")
+    applicationDefaultJvmArgs = listOf("--enable-native-access=ALL-UNNAMED")
 }
 
 tasks.test {
