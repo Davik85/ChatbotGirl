@@ -8,6 +8,8 @@ import app.logic.MemoryService
 import app.logic.PersonaPrompt
 import app.logic.RateLimiter
 import app.logic.Safety
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import kotlinx.coroutines.delay
@@ -18,12 +20,40 @@ import kotlin.math.max
 
 private const val LONG_POLL_TIMEOUT_SEC = 25
 
-private data class TgChat(val id: Long)
-private data class TgUser(val id: Long, val first_name: String? = null, val username: String? = null)
-private data class TgMessage(val message_id: Long, val date: Long, val text: String?, val chat: TgChat, val from: TgUser?)
-private data class TgUpdate(val update_id: Long, val message: TgMessage?)
-private data class TgErrParams(val retry_after: Int? = null)
-private data class TgResp<T>(val ok: Boolean, val result: T?, val error_code: Int? = null, val description: String? = null, val parameters: TgErrParams? = null)
+@JsonIgnoreProperties(ignoreUnknown = true)
+private data class LpChat(val id: Long)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+private data class LpUser(
+    val id: Long,
+    val first_name: String? = null,
+    val username: String? = null,
+    val is_bot: Boolean? = null
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+private data class LpMessage(
+    val message_id: Long,
+    val date: Long,
+    val text: String?,
+    val chat: LpChat,
+    val from: LpUser?
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+private data class LpUpdate(val update_id: Long, val message: LpMessage?)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+private data class LpErrParams(val retry_after: Int? = null)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+private data class LpResp<T>(
+    val ok: Boolean,
+    val result: T?,
+    val error_code: Int? = null,
+    val description: String? = null,
+    val parameters: LpErrParams? = null
+)
 
 class TelegramLongPolling(
     private val token: String,
@@ -36,18 +66,20 @@ class TelegramLongPolling(
         .connectTimeout(Duration.ofSeconds(10))
         .readTimeout(Duration.ofSeconds(LONG_POLL_TIMEOUT_SEC.toLong() + 10))
         .build()
-    private val mapper = jacksonObjectMapper()
+
+    private val mapper = jacksonObjectMapper().apply {
+        configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+    }
 
     @Volatile private var running = true
 
     suspend fun start() {
-        runCatching {
-            val url = "${AppConfig.TELEGRAM_BASE}/bot$token/deleteWebhook?drop_pending_updates=true"
-            http.newCall(Request.Builder().url(url).get().build()).execute().close()
-        }
+        // Просто проверяем токен для информации.
+        tg.getMe()
 
         var offset = 0L
         var backoff = 400L
+        println("POLL: start (timeout=${LONG_POLL_TIMEOUT_SEC}s)")
 
         while (running) {
             try {
@@ -59,18 +91,20 @@ class TelegramLongPolling(
                     val raw = resp.body?.string().orEmpty()
                     if (!resp.isSuccessful) error("getUpdates HTTP ${resp.code} ${resp.message} body=$raw")
 
-                    val data: TgResp<List<TgUpdate>> = mapper.readValue(raw)
+                    val data: LpResp<List<LpUpdate>> = mapper.readValue(raw)
                     if (!data.ok) {
                         val ra = data.parameters?.retry_after
                         if (data.error_code == 429 && ra != null) {
-                            println("POLL: 429, sleeping ${ra}s")
+                            println("POLL: 429 Too Many Requests → sleep ${ra}s")
                             delay(ra * 1000L); return@use
                         }
                         error("getUpdates API ${data.error_code}: ${data.description}")
                     }
 
                     val updates = data.result.orEmpty()
-                    if (updates.isNotEmpty()) {
+                    if (updates.isEmpty()) {
+                        println("POLL: 0 updates (offset=$offset)")
+                    } else {
                         println("POLL: got ${updates.size} updates (offset=$offset)")
                         for (u in updates) {
                             offset = max(offset, u.update_id + 1)
@@ -79,7 +113,8 @@ class TelegramLongPolling(
                     }
                     backoff = 400L
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                println("POLL-ERR: ${e.message}")
                 delay(backoff)
                 backoff = (backoff * 2).coerceAtMost(15_000)
             }
@@ -88,15 +123,21 @@ class TelegramLongPolling(
 
     fun stop() { running = false }
 
-    private fun handleMessage(msg: TgMessage) {
+    private fun handleMessage(msg: LpMessage) {
         val userId = msg.from?.id ?: msg.chat.id
         val text = msg.text?.trim().orEmpty()
         if (text.isEmpty()) return
+        if (text == "/start") {
+            tg.sendMessage(msg.chat.id, "Привет! Я Ева — твоя поддержка и компания. Напиши, как проходит день 💬")
+            return
+        }
+
+        println("MSG: from=$userId text='${text.take(60)}'")
 
         if (Safety.isCrisis(text)) {
             val safe = """
                 Похоже, тебе сейчас очень тяжело. Ты не один.
-                В экстренной ситуации звони 112. Бесплатные линии поддержки: 8-800-2000-122 (дети, подростки), 8-800-700-06-00 (круглосуточно).
+                В экстренной ситуации звони 112. Бесплатные линии поддержки: 8-800-2000-122, 8-800-700-06-00.
                 Я рядом и готова поговорить столько, сколько нужно.
             """.trimIndent()
             tg.sendMessage(msg.chat.id, safe)
@@ -105,7 +146,7 @@ class TelegramLongPolling(
 
         val isPremium = PremiumRepo.isPremium(userId)
         if (!isPremium && !RateLimiter.canSend(userId)) {
-            tg.sendMessage(msg.chat.id, AppConfig.LIMIT_REACHED_TEXT)
+            tg.sendMessage(msg.chat.id, app.AppConfig.LIMIT_REACHED_TEXT)
             return
         }
 
@@ -120,12 +161,16 @@ class TelegramLongPolling(
             add(ChatMessage("user", text))
         }
 
-        val reply = try { ai.complete(messages) } catch (_: Exception) { AppConfig.FALLBACK_REPLY }
+        val reply = try { ai.complete(messages) } catch (e: Exception) {
+            println("AI-ERR: ${e.message}")
+            app.AppConfig.FALLBACK_REPLY
+        }
 
         mem.append(userId, "user", text, System.currentTimeMillis())
         mem.append(userId, "assistant", reply, System.currentTimeMillis())
         RateLimiter.increment(userId)
 
-        tg.sendMessage(msg.chat.id, reply)
+        val ok = tg.sendMessage(msg.chat.id, reply)
+        if (!ok) println("SEND-WARN: message wasn't delivered (see SEND-ERR above).")
     }
 }
