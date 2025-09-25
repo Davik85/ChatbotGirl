@@ -1,13 +1,8 @@
 package app.db
 
-import org.jetbrains.exposed.sql.Database
-import org.jetbrains.exposed.sql.SchemaUtils
-import org.jetbrains.exposed.sql.Table
-import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.select
+import org.jetbrains.exposed.sql.*
+import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.jetbrains.exposed.sql.update
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 
 object Users : Table("users") {
     val id = long("id")
@@ -15,39 +10,38 @@ object Users : Table("users") {
     val username = varchar("username", 64).nullable()
     val isPremiumUntil = long("premium_until").default(0L)
     val createdAt = long("created_at")
-
     override val primaryKey = PrimaryKey(id)
 }
 
 object Messages : Table("messages") {
     val id = long("id").autoIncrement()
     val userId = long("user_id").index()
-    val role = varchar("role", 16)
+    val role = varchar("role", 16) // user/assistant/system
     val content = text("content")
     val ts = long("ts")
-
     override val primaryKey = PrimaryKey(id)
 }
+
 object MemoryNotes : Table("memory_notes") {
     val userId = long("user_id")
     val note = text("note")
     val updatedAt = long("updated_at")
-
     override val primaryKey = PrimaryKey(userId)
 }
+
 object UserStats : Table("user_stats") {
     val userId = long("user_id")
-    val day = varchar("day", 10)
+    val day = varchar("day", 10) // yyyy-MM-dd
     val sentToday = integer("sent_today").default(0)
-
     override val primaryKey = PrimaryKey(userId)
 }
+
 object ProcessedUpdates : Table("processed_updates") {
     val updateId = long("update_id")
     val ts = long("ts")
-
     override val primaryKey = PrimaryKey(updateId)
 }
+
 object DatabaseFactory {
     fun init() {
         Database.connect("jdbc:sqlite:./bot.db", driver = "org.sqlite.JDBC")
@@ -65,11 +59,16 @@ object DatabaseFactory {
             "DROP INDEX IF EXISTS user_stats_user_id",
             "DROP INDEX IF EXISTS processed_updates_update_id"
         )
+
         drops.forEach { sql ->
-            runCatching { org.jetbrains.exposed.sql.transactions.TransactionManager.current().exec(sql) }
+            try {
+                TransactionManager.current().exec(sql)
+            } catch (_: Exception) {
+            }
         }
     }
 }
+
 object UserRepo {
     fun upsert(userId: Long, firstName: String?, username: String?) = transaction {
         val exists = Users
