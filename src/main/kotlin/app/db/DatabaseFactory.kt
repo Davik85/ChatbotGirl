@@ -1,8 +1,9 @@
 package app.db
 
 import org.jetbrains.exposed.sql.*
+import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.jetbrains.exposed.sql.transactions.transaction
-import java.sql.DriverManager
+import java.sql.Connection
 
 // ---------- Таблицы ----------
 
@@ -18,28 +19,32 @@ object Users : Table("users") {
 object Messages : Table("messages") {
     val id = long("id").autoIncrement()
     val userId = long("user_id").index()
-    val role = varchar("role", 16) // user/assistant/system
+    val role = varchar("role", 16)   // user / assistant / system
     val content = text("content")
     val ts = long("ts")
     override val primaryKey = PrimaryKey(id)
 }
 
-object MemoryNotes : Table("memory_notes") {
-    val userId = long("user_id")
+/**
+ * ВНИМАНИЕ: новая таблица заметок с корректной схемой.
+ * Старую "memory_notes" не трогаем — просто больше не используем.
+ */
+object MemoryNotesV2 : Table("memory_notes_v2") {
+    val userId = long("user_id").uniqueIndex()
     val note = text("note")
     val updatedAt = long("updated_at")
     override val primaryKey = PrimaryKey(userId)
 }
 
 object UserStats : Table("user_stats") {
-    val userId = long("user_id")
+    val userId = long("user_id").uniqueIndex()
     val day = varchar("day", 10) // yyyy-MM-dd
     val sentToday = integer("sent_today").default(0)
     override val primaryKey = PrimaryKey(userId)
 }
 
 object ProcessedUpdates : Table("processed_updates") {
-    val updateId = long("update_id")
+    val updateId = long("update_id").uniqueIndex()
     val ts = long("ts")
     override val primaryKey = PrimaryKey(updateId)
 }
@@ -47,45 +52,18 @@ object ProcessedUpdates : Table("processed_updates") {
 // ---------- Инициализация БД ----------
 
 object DatabaseFactory {
-
-    private const val JDBC_URL = "jdbc:sqlite:./bot.db"
-
     fun init() {
-        Database.connect(url = JDBC_URL, driver = "org.sqlite.JDBC")
-
-        // 1) создаём/мигрируем таблицы через Exposed
-        transaction {
-            SchemaUtils.createMissingTablesAndColumns(
-                Users, Messages, MemoryNotes, UserStats, ProcessedUpdates
-            )
-        }
-
-        // 2) чистим возможные старые индексы через обычный JDBC (вне transaction {})
-        dropLegacyIndexes()
-    }
-
-    /**
-     * Сносим возможные старые индексы. IF EXISTS — безопасно.
-     * Здесь намеренно используем чистый JDBC, чтобы не упираться в различия версий Exposed.
-     */
-    private fun dropLegacyIndexes() {
-        val names = listOf(
-            "users_id",
-            "memory_notes_user_id",
-            "user_stats_user_id",
-            "processed_updates_update_id"
+        Database.connect(
+            url = "jdbc:sqlite:./bot.db",
+            driver = "org.sqlite.JDBC"
         )
-        names.forEach { name ->
-            runCatching { execUpdate("DROP INDEX IF EXISTS $name;") }
-        }
-    }
+        TransactionManager.manager.defaultIsolationLevel = Connection.TRANSACTION_SERIALIZABLE
 
-    /** Универсальный апдейтер для DDL/UPDATE/DELETE. */
-    private fun execUpdate(sql: String) {
-        DriverManager.getConnection(JDBC_URL).use { conn ->
-            conn.createStatement().use { st ->
-                st.executeUpdate(sql)
-            }
+        transaction {
+            // Создаём недостающие таблицы/колонки/индексы для актуальных схем
+            SchemaUtils.createMissingTablesAndColumns(
+                Users, Messages, MemoryNotesV2, UserStats, ProcessedUpdates
+            )
         }
     }
 }

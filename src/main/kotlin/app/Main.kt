@@ -31,8 +31,10 @@ fun main() {
 
         DatabaseFactory.init()
 
-        val tg = TelegramApi(tgToken)
-        val ai = OpenAIClient(aiKey)
+        val config = AppConfig
+        val tg = TelegramApi(config.telegramToken)
+        val ai = OpenAIClient(config.openAiApiKey)
+        val mem = MemoryService
 
         if (!ai.healthCheck()) {
             println("FATAL: OpenAI недоступен (ключ/доступ/проект). Проверь OPENAI_API_KEY / OPENAI_ORG / OPENAI_PROJECT.")
@@ -46,10 +48,10 @@ fun main() {
         println("Starting Telegram long polling…")
         runBlocking {
             TelegramLongPolling(
-                token = tgToken,
+                token = config.telegramToken,
                 tg = tg,
                 ai = ai,
-                mem = MemoryService
+                mem = mem
             ).start()
         }
     } catch (t: Throwable) {
