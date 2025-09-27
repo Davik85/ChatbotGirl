@@ -1,16 +1,17 @@
 package app.web
 
 import app.AppConfig
+import app.common.Json
 import app.db.PremiumRepo
 import app.llm.OpenAIClient
-import app.llm.OpenAIClient.ChatMessage
+import app.llm.dto.ChatMessage
 import app.logic.MemoryService
 import app.logic.PersonaPrompt
 import app.logic.RateLimiter
 import app.logic.Safety
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-import com.fasterxml.jackson.databind.DeserializationFeature
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import app.web.dto.LpMessage
+import app.web.dto.LpResp
+import app.web.dto.LpUpdate
 import com.fasterxml.jackson.module.kotlin.readValue
 import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
@@ -19,41 +20,6 @@ import java.time.Duration
 import kotlin.math.max
 
 private const val LONG_POLL_TIMEOUT_SEC = 25
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-private data class LpChat(val id: Long)
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-private data class LpUser(
-    val id: Long,
-    val first_name: String? = null,
-    val username: String? = null,
-    val is_bot: Boolean? = null
-)
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-private data class LpMessage(
-    val message_id: Long,
-    val date: Long,
-    val text: String?,
-    val chat: LpChat,
-    val from: LpUser?
-)
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-private data class LpUpdate(val update_id: Long, val message: LpMessage?)
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-private data class LpErrParams(val retry_after: Int? = null)
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-private data class LpResp<T>(
-    val ok: Boolean,
-    val result: T?,
-    val error_code: Int? = null,
-    val description: String? = null,
-    val parameters: LpErrParams? = null
-)
 
 class TelegramLongPolling(
     private val token: String,
@@ -67,15 +33,11 @@ class TelegramLongPolling(
         .readTimeout(Duration.ofSeconds(LONG_POLL_TIMEOUT_SEC.toLong() + 10))
         .build()
 
-    private val mapper = jacksonObjectMapper().apply {
-        configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-    }
-
+    private val mapper = Json.mapper
     @Volatile private var running = true
 
     suspend fun start() {
-        // Просто проверяем токен для информации.
-        tg.getMe()
+        tg.getMe() // просто лого, не фейлим старт
 
         var offset = 0L
         var backoff = 400L
@@ -127,12 +89,13 @@ class TelegramLongPolling(
         val userId = msg.from?.id ?: msg.chat.id
         val text = msg.text?.trim().orEmpty()
         if (text.isEmpty()) return
-        if (text == "/start") {
-            tg.sendMessage(msg.chat.id, "Привет! Я Ева — твоя поддержка и компания. Напиши, как проходит день 💬")
-            return
-        }
 
         println("MSG: from=$userId text='${text.take(60)}'")
+
+        if (text == "/start") {
+            tg.sendMessage(msg.chat.id, "Привет! Я Ева — тёплая AI-подруга. Напиши, как проходит день 💬")
+            return
+        }
 
         if (Safety.isCrisis(text)) {
             val safe = """
@@ -140,14 +103,12 @@ class TelegramLongPolling(
                 В экстренной ситуации звони 112. Бесплатные линии поддержки: 8-800-2000-122, 8-800-700-06-00.
                 Я рядом и готова поговорить столько, сколько нужно.
             """.trimIndent()
-            tg.sendMessage(msg.chat.id, safe)
-            return
+            tg.sendMessage(msg.chat.id, safe); return
         }
 
         val isPremium = PremiumRepo.isPremium(userId)
         if (!isPremium && !RateLimiter.canSend(userId)) {
-            tg.sendMessage(msg.chat.id, app.AppConfig.LIMIT_REACHED_TEXT)
-            return
+            tg.sendMessage(msg.chat.id, app.AppConfig.LIMIT_REACHED_TEXT); return
         }
 
         val system = ChatMessage("system", PersonaPrompt.system())
@@ -162,8 +123,7 @@ class TelegramLongPolling(
         }
 
         val reply = try { ai.complete(messages) } catch (e: Exception) {
-            println("AI-ERR: ${e.message}")
-            app.AppConfig.FALLBACK_REPLY
+            println("AI-ERR: ${e.message}"); app.AppConfig.FALLBACK_REPLY
         }
 
         mem.append(userId, "user", text, System.currentTimeMillis())
