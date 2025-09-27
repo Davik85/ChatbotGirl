@@ -15,8 +15,9 @@ fun main() {
     try {
         val rawTg = System.getenv("TELEGRAM_TOKEN")
         val rawAi = System.getenv("OPENAI_API_KEY")
+        val rawOrg = System.getenv("OPENAI_ORG")
+        val rawProj = System.getenv("OPENAI_PROJECT")
         println("ENV: TELEGRAM_TOKEN=${if (rawTg.isNullOrBlank()) "missing" else "present"}, OPENAI_API_KEY=${if (rawAi.isNullOrBlank()) "missing" else "present"}")
-
         println("BOOT: long-polling mode")
 
         val tgToken = runCatching { AppConfig.telegramToken }.getOrElse {
@@ -26,6 +27,7 @@ fun main() {
             println("FATAL: OPENAI_API_KEY invalid or missing. ${it.message}"); return
         }
         println("TOKENS: tg=${mask(tgToken)} ai=${mask(aiKey)}")
+        println("OPENAI HEADERS: org=${AppConfig.openAiOrg ?: "-"} project=${AppConfig.openAiProject ?: "-"}")
 
         DatabaseFactory.init()
 
@@ -33,10 +35,9 @@ fun main() {
         val ai = OpenAIClient(aiKey)
 
         if (!ai.healthCheck()) {
-            println("FATAL: OpenAI недоступен (ключ/доступ/модель). Проверь OPENAI_API_KEY и права на модель в OpenAI.")
+            println("FATAL: OpenAI недоступен (ключ/доступ/проект). Проверь OPENAI_API_KEY / OPENAI_ORG / OPENAI_PROJECT.")
             return
         }
-
         if (!tg.getMe()) {
             println("FATAL: invalid TELEGRAM_TOKEN — бот не сможет отвечать.")
             return

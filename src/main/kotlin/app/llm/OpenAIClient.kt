@@ -28,6 +28,15 @@ class OpenAIClient(
     private val mapper = Json.mapper
     private val json = "application/json; charset=utf-8".toMediaType()
 
+    private val orgHeader: String? = AppConfig.openAiOrg
+    private val projectHeader: String? = AppConfig.openAiProject
+
+    private fun Request.Builder.addOpenAIHeaders(): Request.Builder {
+        if (orgHeader != null) addHeader("OpenAI-Organization", orgHeader)
+        if (projectHeader != null) addHeader("OpenAI-Project", projectHeader)
+        return this
+    }
+
     fun complete(messages: List<ChatMessage>): String {
         var backoff = INITIAL_BACKOFF_MS
         repeat(MAX_ATTEMPTS) { attempt ->
@@ -37,6 +46,7 @@ class OpenAIClient(
                 val req = Request.Builder()
                     .url(AppConfig.OPENAI_URL)
                     .addHeader("Authorization", "Bearer $apiKey")
+                    .addOpenAIHeaders()
                     .post(body)
                     .build()
 
@@ -59,6 +69,7 @@ class OpenAIClient(
         val req = Request.Builder()
             .url("https://api.openai.com/v1/models")
             .addHeader("Authorization", "Bearer $apiKey")
+            .addOpenAIHeaders()
             .get()
             .build()
 
