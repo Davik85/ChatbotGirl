@@ -19,7 +19,6 @@ fun main() {
 
         println("BOOT: long-polling mode")
 
-        // 1) Жёстко инициализируем AppConfig (с валидацией и санитайзом)
         val tgToken = runCatching { AppConfig.telegramToken }.getOrElse {
             println("FATAL: TELEGRAM_TOKEN invalid or missing. ${it.message}"); return
         }
@@ -28,27 +27,21 @@ fun main() {
         }
         println("TOKENS: tg=${mask(tgToken)} ai=${mask(aiKey)}")
 
-        // 2) БД
         DatabaseFactory.init()
 
-        // 3) Клиенты
         val tg = TelegramApi(tgToken)
         val ai = OpenAIClient(aiKey)
 
-        // 4) Проверка доступности OpenAI, чтобы не падать в fallback
         if (!ai.healthCheck()) {
             println("FATAL: OpenAI недоступен (ключ/доступ/модель). Проверь OPENAI_API_KEY и права на модель в OpenAI.")
-            // Можно выйти return, чтобы не запускать поллер без LLM
             return
         }
 
-        // 5) Проверка токена Telegram
         if (!tg.getMe()) {
             println("FATAL: invalid TELEGRAM_TOKEN — бот не сможет отвечать.")
             return
         }
 
-        // 6) Запуск поллера
         println("Starting Telegram long polling…")
         runBlocking {
             TelegramLongPolling(
