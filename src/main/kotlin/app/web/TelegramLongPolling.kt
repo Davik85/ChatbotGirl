@@ -2,9 +2,9 @@ package app.web
 
 import app.AppConfig
 import app.common.Json
-import app.db.MemoryNotes.userId
 import app.db.PremiumRepo
 import app.llm.OpenAIClient
+import app.llm.dto.ChatMessage
 import app.logic.MemoryService
 import app.logic.RateLimiter
 import app.logic.Safety
@@ -27,17 +27,18 @@ class TelegramLongPolling(
     private val mem: MemoryService
 ) {
     private val http = OkHttpClient.Builder()
-        .callTimeout(Duration.ofSeconds(LONG_POLL_TIMEOUT_SEC.toLong() + 10))
+        .callTimeout(Duration.ofSeconds(LONG_POLL_TIMEOUT_SEC + 10L))
         .connectTimeout(Duration.ofSeconds(10))
-        .readTimeout(Duration.ofSeconds(LONG_POLL_TIMEOUT_SEC.toLong() + 10))
+        .readTimeout(Duration.ofSeconds(LONG_POLL_TIMEOUT_SEC + 10L))
         .build()
 
     private val mapper = Json.mapper
+
     @Volatile
     private var running = true
 
     suspend fun start() {
-        tg.getMe() // просто лого, не фейлим старт
+        tg.getMe() // просто лог, не фейлим старт
 
         var offset = 0L
         var backoff = 400L
@@ -92,20 +93,23 @@ class TelegramLongPolling(
         val text = msg.text?.trim().orEmpty()
         if (text.isEmpty()) return
 
-        println("MSG: from=$userId text='${text.take(60)}'")
+        println("MSG: from=$tgUserId text='${text.take(60)}'")
 
         if (text == "/start") {
-            tg.sendMessage(msg.chat.id, "Привет! Я Ева — тёплая AI-подруга. Напиши, как проходит день 💬")
+            tg.sendMessage(
+                msg.chat.id,
+                "Привет! Я Ева — тёплая AI-подруга. Напиши, как проходит день 💬"
+            )
             return
         }
 
         // 1) Кризис — всегда приоритетнее
         if (Safety.isCrisis(text)) {
             val safe = """
-            Похоже, тебе сейчас очень тяжело. Ты не один.
-            В экстренной ситуации звони 112. Бесплатные линии поддержки: 8-800-2000-122, 8-800-700-06-00.
-            Я рядом и готова поговорить столько, сколько нужно.
-        """.trimIndent()
+                Похоже, тебе сейчас очень тяжело. Ты не один.
+                В экстренной ситуации звони 112. Бесплатные линии поддержки: 8-800-2000-122, 8-800-700-06-00.
+                Я рядом и готова поговорить столько, сколько нужно.
+            """.trimIndent()
             tg.sendMessage(msg.chat.id, safe)
             return
         }
@@ -123,15 +127,17 @@ class TelegramLongPolling(
         }
 
         // 3) Контекст для LLM
-        val system = app.llm.dto.ChatMessage("system", app.logic.PersonaPrompt.system())
-        val memoryNote = mem.getNote(userId)?.let { app.llm.dto.ChatMessage("system", "Memory: $it") }
-        val history = mem.recentDialog(userId).flatMap { listOf(app.llm.dto.ChatMessage(it.first, it.second)) }
+        val system = ChatMessage("system", app.logic.PersonaPrompt.system())
+        val memoryNote = mem.getNote(tgUserId)?.let { ChatMessage("system", "Memory: $it") }
+        val history = mem.recentDialog(tgUserId).flatMap { (role, content) ->
+            listOf(ChatMessage(role, content))
+        }
 
         val messages = buildList {
             add(system)
             if (memoryNote != null) add(memoryNote)
             addAll(history)
-            add(app.llm.dto.ChatMessage("user", text))
+            add(ChatMessage("user", text))
         }
 
         // 4) Вызов LLM
@@ -139,10 +145,10 @@ class TelegramLongPolling(
             ai.complete(messages)
         } catch (e: Exception) {
             println("AI-ERR: ${e.message}")
-            app.AppConfig.FALLBACK_REPLY
+            AppConfig.FALLBACK_REPLY
         }
 
-        // 5) Пишем в память и считаем лимит только после отправки
+        // 5) Пишем в память и считаем лимит только ПОСЛЕ успешной отправки
         val delivered = tg.sendMessage(msg.chat.id, reply)
         if (delivered) {
             mem.append(tgUserId, "user", text, System.currentTimeMillis())

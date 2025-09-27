@@ -1,56 +1,58 @@
 package app.logic
 
-import app.db.MemoryNotes
+import app.db.MemoryNotesV2
 import app.db.Messages
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
-import java.time.LocalDate
 
-const val LIMIT_DIALOG = 12
-
-/**
- * Minimal memory:
- * - Raw message log
- * - Compact note updated every N messages
- * - Daily message count for free-limit
- */
 object MemoryService {
-    fun append(userId: Long, role: String, text: String, ts: Long) = transaction {
+
+    fun getNote(userId: Long): String? = transaction {
+        MemoryNotesV2
+            .slice(MemoryNotesV2.note)
+            .select { MemoryNotesV2.userId eq userId }
+            .firstOrNull()
+            ?.get(MemoryNotesV2.note)
+    }
+
+    fun setNote(userId: Long, note: String) = transaction {
+        val exists = MemoryNotesV2
+            .slice(MemoryNotesV2.userId)
+            .select { MemoryNotesV2.userId eq userId }
+            .limit(1)
+            .any()
+
+        if (exists) {
+            MemoryNotesV2.update({ MemoryNotesV2.userId eq userId }) {
+                it[MemoryNotesV2.note] = note
+                it[MemoryNotesV2.updatedAt] = System.currentTimeMillis()
+            }
+        } else {
+            MemoryNotesV2.insert {
+                it[MemoryNotesV2.userId] = userId
+                it[MemoryNotesV2.note] = note
+                it[MemoryNotesV2.updatedAt] = System.currentTimeMillis()
+            }
+        }
+    }
+
+    fun append(userId: Long, role: String, content: String, ts: Long) = transaction {
         Messages.insert {
             it[Messages.userId] = userId
             it[Messages.role] = role
-            it[Messages.content] = text
+            it[Messages.content] = content
             it[Messages.ts] = ts
         }
     }
 
-    fun recentDialog(userId: Column<Long>, limit: Int = LIMIT_DIALOG): List<Pair<String, String>> = transaction {
-        Messages.select { Messages.userId eq userId }
-            .orderBy(Messages.id, SortOrder.DESC)
+    /** Возвращает последние N реплик диалога в виде пар (role, content) */
+    fun recentDialog(userId: Long, limit: Int = 10): List<Pair<String, String>> = transaction {
+        Messages
+            .slice(Messages.role, Messages.content)
+            .select { Messages.userId eq userId }
+            .orderBy(Messages.ts, SortOrder.DESC)
             .limit(limit)
             .map { it[Messages.role] to it[Messages.content] }
-            .reversed()
+            .reversed() // хронологический порядок
     }
-
-    fun getNote(userId: Column<Long>): String? = transaction {
-        MemoryNotes.select { MemoryNotes.userId eq userId }.firstOrNull()?.get(MemoryNotes.note)
-    }
-
-    fun upsertNote(userId: Long, note: String) = transaction {
-        val exists = MemoryNotes.select { MemoryNotes.userId eq userId }.count() > 0
-        if (exists) {
-            MemoryNotes.update({ MemoryNotes.userId eq userId }) {
-                it[MemoryNotes.note] = note
-                it[updatedAt] = System.currentTimeMillis()
-            }
-        } else {
-            MemoryNotes.insert {
-                it[MemoryNotes.userId] = userId
-                it[MemoryNotes.note] = note
-                it[updatedAt] = System.currentTimeMillis()
-            }
-        }
-    }
-
-    fun dayKey(): String = LocalDate.now().toString()
 }
