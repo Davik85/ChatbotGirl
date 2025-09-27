@@ -2,11 +2,10 @@ package app.web
 
 import app.AppConfig
 import app.common.Json
+import app.db.MemoryNotes.userId
 import app.db.PremiumRepo
 import app.llm.OpenAIClient
-import app.llm.dto.ChatMessage
 import app.logic.MemoryService
-import app.logic.PersonaPrompt
 import app.logic.RateLimiter
 import app.logic.Safety
 import app.web.dto.LpMessage
@@ -34,7 +33,8 @@ class TelegramLongPolling(
         .build()
 
     private val mapper = Json.mapper
-    @Volatile private var running = true
+    @Volatile
+    private var running = true
 
     suspend fun start() {
         tg.getMe() // просто лого, не фейлим старт
@@ -83,10 +83,12 @@ class TelegramLongPolling(
         }
     }
 
-    fun stop() { running = false }
+    fun stop() {
+        running = false
+    }
 
     private fun handleMessage(msg: LpMessage) {
-        val userId = msg.from?.id ?: msg.chat.id
+        val tgUserId = msg.from?.id ?: msg.chat.id
         val text = msg.text?.trim().orEmpty()
         if (text.isEmpty()) return
 
@@ -97,40 +99,57 @@ class TelegramLongPolling(
             return
         }
 
+        // 1) Кризис — всегда приоритетнее
         if (Safety.isCrisis(text)) {
             val safe = """
-                Похоже, тебе сейчас очень тяжело. Ты не один.
-                В экстренной ситуации звони 112. Бесплатные линии поддержки: 8-800-2000-122, 8-800-700-06-00.
-                Я рядом и готова поговорить столько, сколько нужно.
-            """.trimIndent()
-            tg.sendMessage(msg.chat.id, safe); return
+            Похоже, тебе сейчас очень тяжело. Ты не один.
+            В экстренной ситуации звони 112. Бесплатные линии поддержки: 8-800-2000-122, 8-800-700-06-00.
+            Я рядом и готова поговорить столько, сколько нужно.
+        """.trimIndent()
+            tg.sendMessage(msg.chat.id, safe)
+            return
         }
 
-        val isPremium = PremiumRepo.isPremium(userId)
-        if (!isPremium && !RateLimiter.canSend(userId)) {
-            tg.sendMessage(msg.chat.id, app.AppConfig.LIMIT_REACHED_TEXT); return
+        // 2) Премиум/лимит
+        val isPremium = PremiumRepo.isPremium(tgUserId)
+        if (!isPremium) {
+            val can = RateLimiter.canSend(tgUserId)
+            if (!can) {
+                val left = RateLimiter.remaining(tgUserId)
+                println("LIMIT-HIT: user=$tgUserId remaining=$left")
+                tg.sendMessage(msg.chat.id, AppConfig.PAYWALL_TEXT)
+                return
+            }
         }
 
-        val system = ChatMessage("system", PersonaPrompt.system())
-        val memoryNote = mem.getNote(userId)?.let { ChatMessage("system", "Memory: $it") }
-        val history = mem.recentDialog(userId).flatMap { listOf(ChatMessage(it.first, it.second)) }
+        // 3) Контекст для LLM
+        val system = app.llm.dto.ChatMessage("system", app.logic.PersonaPrompt.system())
+        val memoryNote = mem.getNote(userId)?.let { app.llm.dto.ChatMessage("system", "Memory: $it") }
+        val history = mem.recentDialog(userId).flatMap { listOf(app.llm.dto.ChatMessage(it.first, it.second)) }
 
         val messages = buildList {
             add(system)
             if (memoryNote != null) add(memoryNote)
             addAll(history)
-            add(ChatMessage("user", text))
+            add(app.llm.dto.ChatMessage("user", text))
         }
 
-        val reply = try { ai.complete(messages) } catch (e: Exception) {
-            println("AI-ERR: ${e.message}"); app.AppConfig.FALLBACK_REPLY
+        // 4) Вызов LLM
+        val reply = try {
+            ai.complete(messages)
+        } catch (e: Exception) {
+            println("AI-ERR: ${e.message}")
+            app.AppConfig.FALLBACK_REPLY
         }
 
-        mem.append(userId, "user", text, System.currentTimeMillis())
-        mem.append(userId, "assistant", reply, System.currentTimeMillis())
-        RateLimiter.increment(userId)
-
-        val ok = tg.sendMessage(msg.chat.id, reply)
-        if (!ok) println("SEND-WARN: message wasn't delivered (see SEND-ERR above).")
+        // 5) Пишем в память и считаем лимит только после отправки
+        val delivered = tg.sendMessage(msg.chat.id, reply)
+        if (delivered) {
+            mem.append(tgUserId, "user", text, System.currentTimeMillis())
+            mem.append(tgUserId, "assistant", reply, System.currentTimeMillis())
+            if (!isPremium) RateLimiter.increment(tgUserId)
+        } else {
+            println("SEND-WARN: message wasn't delivered (see SEND-ERR above).")
+        }
     }
 }
