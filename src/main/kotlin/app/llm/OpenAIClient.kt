@@ -16,7 +16,7 @@ private const val INITIAL_BACKOFF_MS = 400L
 
 class OpenAIClient(
     private val apiKey: String,
-    private val model: String = "gpt-4o-mini"
+    private val model: String = "gpt-5"
 ) {
     private val client: OkHttpClient = OkHttpClient.Builder()
         .callTimeout(java.time.Duration.ofSeconds(30))
