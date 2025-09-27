@@ -1,8 +1,10 @@
 package app.db
 
 import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.jetbrains.exposed.sql.transactions.transaction
+import java.sql.DriverManager
+
+// ---------- Таблицы ----------
 
 object Users : Table("users") {
     val id = long("id")
@@ -42,32 +44,53 @@ object ProcessedUpdates : Table("processed_updates") {
     override val primaryKey = PrimaryKey(updateId)
 }
 
+// ---------- Инициализация БД ----------
+
 object DatabaseFactory {
+
+    private const val JDBC_URL = "jdbc:sqlite:./bot.db"
+
     fun init() {
-        Database.connect("jdbc:sqlite:./bot.db", driver = "org.sqlite.JDBC")
+        Database.connect(url = JDBC_URL, driver = "org.sqlite.JDBC")
+
+        // 1) создаём/мигрируем таблицы через Exposed
         transaction {
             SchemaUtils.createMissingTablesAndColumns(
                 Users, Messages, MemoryNotes, UserStats, ProcessedUpdates
             )
-            cleanupLegacyIndexes()
+        }
+
+        // 2) чистим возможные старые индексы через обычный JDBC (вне transaction {})
+        dropLegacyIndexes()
+    }
+
+    /**
+     * Сносим возможные старые индексы. IF EXISTS — безопасно.
+     * Здесь намеренно используем чистый JDBC, чтобы не упираться в различия версий Exposed.
+     */
+    private fun dropLegacyIndexes() {
+        val names = listOf(
+            "users_id",
+            "memory_notes_user_id",
+            "user_stats_user_id",
+            "processed_updates_update_id"
+        )
+        names.forEach { name ->
+            runCatching { execUpdate("DROP INDEX IF EXISTS $name;") }
         }
     }
-    private fun cleanupLegacyIndexes() {
-        val drops = listOf(
-            "DROP INDEX IF EXISTS users_id",
-            "DROP INDEX IF EXISTS memory_notes_user_id",
-            "DROP INDEX IF EXISTS user_stats_user_id",
-            "DROP INDEX IF EXISTS processed_updates_update_id"
-        )
 
-        drops.forEach { sql ->
-            try {
-                TransactionManager.current().exec(sql)
-            } catch (_: Exception) {
+    /** Универсальный апдейтер для DDL/UPDATE/DELETE. */
+    private fun execUpdate(sql: String) {
+        DriverManager.getConnection(JDBC_URL).use { conn ->
+            conn.createStatement().use { st ->
+                st.executeUpdate(sql)
             }
         }
     }
 }
+
+// ---------- Репозитории ----------
 
 object UserRepo {
     fun upsert(userId: Long, firstName: String?, username: String?) = transaction {

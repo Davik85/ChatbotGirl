@@ -24,7 +24,7 @@ object MemoryService {
         }
     }
 
-    fun recentDialog(userId: Long, limit: Int = LIMIT_DIALOG): List<Pair<String, String>> = transaction {
+    fun recentDialog(userId: Column<Long>, limit: Int = LIMIT_DIALOG): List<Pair<String, String>> = transaction {
         Messages.select { Messages.userId eq userId }
             .orderBy(Messages.id, SortOrder.DESC)
             .limit(limit)
@@ -32,7 +32,7 @@ object MemoryService {
             .reversed()
     }
 
-    fun getNote(userId: Long): String? = transaction {
+    fun getNote(userId: Column<Long>): String? = transaction {
         MemoryNotes.select { MemoryNotes.userId eq userId }.firstOrNull()?.get(MemoryNotes.note)
     }
 
