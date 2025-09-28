@@ -2,7 +2,7 @@ package app.llm
 
 import app.AppConfig
 import app.llm.dto.ChatMessage
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import app.llm.dto.ChatResponse
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
@@ -40,11 +40,13 @@ class OpenAIClient(
             }
             .get()
             .build()
-        http.newCall(req).execute().use { resp -> return resp.isSuccessful }
+
+        // важно вернуть результат из use-лямбды
+        return http.newCall(req).execute().use { resp -> resp.isSuccessful }
     }
 
     fun complete(messages: List<ChatMessage>): String {
-        val body = mutableMapOf<String, Any>(
+        val body: MutableMap<String, Any> = mutableMapOf(
             "model" to model,
             "messages" to messages,
             "max_completion_tokens" to maxCompletionTokens
@@ -69,10 +71,11 @@ class OpenAIClient(
         http.newCall(req).execute().use { resp ->
             val raw = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) error("OpenAI HTTP ${resp.code}  body=$raw")
+
             val parsed: ChatResponse = mapper.readValue(raw)
             return parsed.choices.firstOrNull()?.message?.content?.trim()
                 .takeUnless { it.isNullOrBlank() }
-                ?: app.AppConfig.FALLBACK_REPLY
+                ?: AppConfig.FALLBACK_REPLY
         }
     }
 
@@ -82,9 +85,4 @@ class OpenAIClient(
         val noTemp = m.startsWith("gpt-4.1") || m.startsWith("o4") || m.contains("omni")
         return !noTemp
     }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class ChatResponse(val id: String? = null, val choices: List<ChatChoice> = emptyList())
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class ChatChoice(val index: Int? = null, val message: ChatMessage? = null, val finish_reason: String? = null)
 }
