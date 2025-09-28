@@ -1,85 +1,90 @@
 package app.llm
 
 import app.AppConfig
-import app.common.Json
 import app.llm.dto.ChatMessage
-import app.llm.dto.ChatRequest
-import app.llm.dto.ChatResponse
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-
-private const val MAX_ATTEMPTS = 3
-private const val INITIAL_BACKOFF_MS = 400L
+import java.time.Duration
 
 class OpenAIClient(
     private val apiKey: String,
-    private val model: String = "gpt-5"
+    private val model: String = "gpt-4.1",
+    private val maxCompletionTokens: Int = 400,
+    /** Для моделей, которые поддерживают. Для 4.1/omni/o4 не отправляем вовсе. */
+    private val temperature: Double? = null
 ) {
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .callTimeout(java.time.Duration.ofSeconds(30))
-        .connectTimeout(java.time.Duration.ofSeconds(10))
-        .readTimeout(java.time.Duration.ofSeconds(30))
-        .writeTimeout(java.time.Duration.ofSeconds(30))
-        .build()
-
-    private val mapper = Json.mapper
+    private val mapper = jacksonObjectMapper().apply {
+        configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+    }
     private val json = "application/json; charset=utf-8".toMediaType()
 
-    private val orgHeader: String? = AppConfig.openAiOrg
-    private val projectHeader: String? = AppConfig.openAiProject
-
-    private fun Request.Builder.addOpenAIHeaders(): Request.Builder {
-        if (orgHeader != null) addHeader("OpenAI-Organization", orgHeader)
-        if (projectHeader != null) addHeader("OpenAI-Project", projectHeader)
-        return this
-    }
-
-    fun complete(messages: List<ChatMessage>): String {
-        var backoff = INITIAL_BACKOFF_MS
-        repeat(MAX_ATTEMPTS) { attempt ->
-            try {
-                val request = ChatRequest(model = model, messages = messages, temperature = 0.6)
-                val body = mapper.writeValueAsString(request).toRequestBody(json)
-                val req = Request.Builder()
-                    .url(AppConfig.OPENAI_URL)
-                    .addHeader("Authorization", "Bearer $apiKey")
-                    .addOpenAIHeaders()
-                    .post(body)
-                    .build()
-
-                client.newCall(req).execute().use { resp ->
-                    val raw = resp.body?.string().orEmpty()
-                    if (!resp.isSuccessful) error("OpenAI HTTP ${resp.code} ${resp.message} body=$raw")
-                    val parsed: ChatResponse = mapper.readValue(raw)
-                    val text = parsed.choices.firstOrNull()?.message?.content.orEmpty()
-                    return text.take(AppConfig.MAX_REPLY_CHARS)
-                }
-            } catch (e: Exception) {
-                if (attempt == MAX_ATTEMPTS - 1) throw e
-                Thread.sleep(backoff); backoff *= 2
-            }
-        }
-        error("Unreachable: no response after $MAX_ATTEMPTS attempts")
-    }
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(Duration.ofSeconds(10))
+        .readTimeout(Duration.ofSeconds(60))
+        .callTimeout(Duration.ofSeconds(90))
+        .build()
 
     fun healthCheck(): Boolean {
         val req = Request.Builder()
             .url("https://api.openai.com/v1/models")
             .addHeader("Authorization", "Bearer $apiKey")
-            .addOpenAIHeaders()
+            .apply {
+                AppConfig.openAiOrg?.let { addHeader("OpenAI-Organization", it) }
+                AppConfig.openAiProject?.let { addHeader("OpenAI-Project", it) }
+            }
             .get()
             .build()
+        http.newCall(req).execute().use { resp -> return resp.isSuccessful }
+    }
 
-        client.newCall(req).execute().use { resp ->
-            val body = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) {
-                println("OPENAI-HEALTH ERR ${resp.code} ${resp.message} body=$body")
-                return false
+    fun complete(messages: List<ChatMessage>): String {
+        val body = mutableMapOf<String, Any>(
+            "model" to model,
+            "messages" to messages,
+            "max_completion_tokens" to maxCompletionTokens
+        )
+
+        // temperature отправляем ТОЛЬКО если модель это умеет и значение задано
+        if (supportsTemperature(model) && temperature != null) {
+            body["temperature"] = temperature
+        }
+
+        val req = Request.Builder()
+            .url(AppConfig.OPENAI_URL)
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Content-Type", "application/json")
+            .apply {
+                AppConfig.openAiOrg?.let { addHeader("OpenAI-Organization", it) }
+                AppConfig.openAiProject?.let { addHeader("OpenAI-Project", it) }
             }
-            println("OPENAI-HEALTH ok"); return true
+            .post(mapper.writeValueAsString(body).toRequestBody(json))
+            .build()
+
+        http.newCall(req).execute().use { resp ->
+            val raw = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) error("OpenAI HTTP ${resp.code}  body=$raw")
+            val parsed: ChatResponse = mapper.readValue(raw)
+            return parsed.choices.firstOrNull()?.message?.content?.trim()
+                .takeUnless { it.isNullOrBlank() }
+                ?: app.AppConfig.FALLBACK_REPLY
         }
     }
+
+    private fun supportsTemperature(model: String): Boolean {
+        val m = model.lowercase()
+        // семейства, где temperature сейчас НЕ поддерживается в /chat/completions
+        val noTemp = m.startsWith("gpt-4.1") || m.startsWith("o4") || m.contains("omni")
+        return !noTemp
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class ChatResponse(val id: String? = null, val choices: List<ChatChoice> = emptyList())
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class ChatChoice(val index: Int? = null, val message: ChatMessage? = null, val finish_reason: String? = null)
 }
