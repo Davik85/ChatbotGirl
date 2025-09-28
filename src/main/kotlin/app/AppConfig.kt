@@ -46,7 +46,7 @@ object AppConfig {
 
     // Лимиты/тексты
     const val MAX_REPLY_CHARS = 1800
-    const val FREE_DAILY_MSG_LIMIT = 20
+    const val FREE_DAILY_MSG_LIMIT = 200
 
     // Ссылка на оплату (замени на свою)
     val SUBSCRIBE_URL: String by lazy { clean(readRaw("SUBSCRIBE_URL")) ?: "https://example.com/pay" }
